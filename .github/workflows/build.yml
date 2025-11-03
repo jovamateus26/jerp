@@ -1,0 +1,70 @@
+name: Build custom ERPNext image
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY_URL: ${{ secrets.REGISTRY_URL }}
+      REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+      REGISTRY_PASS: ${{ secrets.REGISTRY_PASS }}
+      IMAGE_NAME: ${{ vars.REGISTRY_IMAGE_NAME != '' && vars.REGISTRY_IMAGE_NAME || 'erpnext-custom' }}
+      IMAGE_TAG_PROD: ${{ vars.REGISTRY_IMAGE_TAG != '' && vars.REGISTRY_IMAGE_TAG || '15-prod' }}
+      FRAPPE_BRANCH: ${{ vars.FRAPPE_BRANCH != '' && vars.FRAPPE_BRANCH || 'version-15' }}
+      PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY_URL }}
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASS }}
+
+      - name: Checkout frappe_docker
+        uses: actions/checkout@v4
+        with:
+          repository: frappe/frappe_docker
+          path: frappe_docker
+
+      - name: Prepare build context
+        run: |
+          mkdir -p build-context
+          cp apps.json build-context/apps.json
+          cp -R frappe_docker build-context/frappe_docker
+          ls build-context
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "commit_tag=${REGISTRY_URL}/${IMAGE_NAME}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "prod_tag=${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG_PROD}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg FRAPPE_BRANCH="${FRAPPE_BRANCH}" \
+            --build-arg APPS_JSON_PATH=apps.json \
+            -t "${{ steps.meta.outputs.commit_tag }}" \
+            -t "${{ steps.meta.outputs.prod_tag }}" \
+            -f build-context/frappe_docker/images/custom/Containerfile \
+            build-context
+
+      - name: Push image tags
+        run: |
+          docker push "${{ steps.meta.outputs.commit_tag }}"
+          docker push "${{ steps.meta.outputs.prod_tag }}"
+
+      - name: Trigger Portainer webhook
+        if: env.PORTAINER_WEBHOOK_URL != ''
+        run: |
+          curl -X POST "${PORTAINER_WEBHOOK_URL}"

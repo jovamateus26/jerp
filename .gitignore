@@ -1,0 +1,19 @@
+# Environment files
+.env
+*.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+
+# Logs and temporary files
+logs/
+*.log
+
+# Docker build cache
+*.tar
+.tmp/
+.cache/
+
+# Backup artifacts
+backups/
