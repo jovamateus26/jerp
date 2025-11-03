@@ -1,0 +1,181 @@
+version: "3.9"
+
+x-frappe-image: &frappe-image "${REGISTRY_URL}/${REGISTRY_IMAGE_NAME}:${REGISTRY_IMAGE_TAG}"
+
+services:
+  db:
+    image: mariadb:10.6
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: site1.local
+      MARIADB_USER: frappe
+      MARIADB_PASSWORD: ${FRAPPE_DB_PASSWORD:-${MARIADB_ROOT_PASSWORD}}
+    volumes:
+      - db-data:/var/lib/mysql
+    networks:
+      - erp
+    restart: unless-stopped
+
+  redis-queue:
+    image: redis:6-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - erp
+    restart: unless-stopped
+
+  redis-cache:
+    image: redis:6-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - erp
+    restart: unless-stopped
+
+  redis-socketio:
+    image: redis:6-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks:
+      - erp
+    restart: unless-stopped
+
+  backend:
+    image: *frappe-image
+    command: ["bench", "start"]
+    environment:
+      DB_HOST: db
+      REDIS_QUEUE: redis-queue:6379
+      REDIS_CACHE: redis-cache:6379
+      REDIS_SOCKETIO: redis-socketio:6379
+      SOCKETIO_PORT: 9000
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-assets:/home/frappe/frappe-bench/sites/assets
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - db
+      - redis-queue
+      - redis-cache
+      - redis-socketio
+    networks:
+      - erp
+    restart: unless-stopped
+
+  scheduler:
+    image: *frappe-image
+    command: ["bench", "schedule"]
+    environment:
+      DB_HOST: db
+      REDIS_QUEUE: redis-queue:6379
+      REDIS_CACHE: redis-cache:6379
+      REDIS_SOCKETIO: redis-socketio:6379
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-assets:/home/frappe/frappe-bench/sites/assets
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - backend
+    networks:
+      - erp
+    restart: unless-stopped
+
+  worker-default:
+    image: *frappe-image
+    command: ["bench", "worker", "--queue", "default"]
+    environment:
+      DB_HOST: db
+      REDIS_QUEUE: redis-queue:6379
+      REDIS_CACHE: redis-cache:6379
+      REDIS_SOCKETIO: redis-socketio:6379
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-assets:/home/frappe/frappe-bench/sites/assets
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - backend
+    networks:
+      - erp
+    restart: unless-stopped
+
+  worker-short:
+    image: *frappe-image
+    command: ["bench", "worker", "--queue", "short"]
+    environment:
+      DB_HOST: db
+      REDIS_QUEUE: redis-queue:6379
+      REDIS_CACHE: redis-cache:6379
+      REDIS_SOCKETIO: redis-socketio:6379
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-assets:/home/frappe/frappe-bench/sites/assets
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - backend
+    networks:
+      - erp
+    restart: unless-stopped
+
+  worker-long:
+    image: *frappe-image
+    command: ["bench", "worker", "--queue", "long"]
+    environment:
+      DB_HOST: db
+      REDIS_QUEUE: redis-queue:6379
+      REDIS_CACHE: redis-cache:6379
+      REDIS_SOCKETIO: redis-socketio:6379
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-assets:/home/frappe/frappe-bench/sites/assets
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - backend
+    networks:
+      - erp
+    restart: unless-stopped
+
+  websocket:
+    image: *frappe-image
+    command: ["bench", "socketio", "--port", "9000"]
+    environment:
+      DB_HOST: db
+      REDIS_QUEUE: redis-queue:6379
+      REDIS_CACHE: redis-cache:6379
+      REDIS_SOCKETIO: redis-socketio:6379
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-assets:/home/frappe/frappe-bench/sites/assets
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - backend
+    networks:
+      - erp
+    restart: unless-stopped
+
+  frontend:
+    image: *frappe-image
+    command: ["nginx", "-g", "daemon off;"]
+    environment:
+      FRAPPE_SITE_NAME_HEADER: "X-Frappe-Site-Name"
+      FRAPPE_DEFAULT_SITE: site1.local
+      SOCKETIO_SERVER: websocket:9000
+    volumes:
+      - frappe-sites:/home/frappe/frappe-bench/sites
+      - frappe-assets:/home/frappe/frappe-bench/sites/assets
+      - frappe-logs:/home/frappe/frappe-bench/logs
+    depends_on:
+      - backend
+      - websocket
+    networks:
+      - erp
+      - proxy
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  frappe-sites:
+  frappe-assets:
+  frappe-logs:
+
+networks:
+  erp:
+    driver: bridge
+  proxy:
+    external: true
